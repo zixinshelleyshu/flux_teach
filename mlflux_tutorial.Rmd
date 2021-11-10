@@ -3,23 +3,12 @@ title: "mlflux_tutorial"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
-
-
-```{r install packages}
+```{r install packages,warning=F, message=F}
 library(torch)
 library(luz)
 library(tidytable)
 library(tidyverse)
 ```
-
-```{r}
-cuda_is_available()
-```
-
 
 ```{r import data}
 df<-read.csv("df.csv")
@@ -36,7 +25,8 @@ df_measure<-df[!names(df)%in% c("GPP_NT_VUT_REF")]
 ```{r}
 # define training and testing set
 set.seed(42)
-test_ind<-sample(1:nrow(df),ceiling(nrow(df)*0.2))
+n<-nrow(df)
+test_ind<-c((n-ceiling(n*0.4)):n)
 y_test_raw<-df_gpp[test_ind,]
 y_train_raw<-df_gpp[-test_ind,]
 X_train_raw<-df_measure[-test_ind,]
@@ -46,7 +36,7 @@ X_train_raw[1:3,]
 ```
 
 
-```{r}
+```{r }
 normalize<-function(df){
   result<-df
   for(name in names(df)[-1]){
@@ -68,7 +58,7 @@ rsq<-function(x, y){cor(x, y)^2}
 ```
 
 
-```{r}
+```{r message=F}
 # Normalising by variables and separate sensing and meta data
 y_train_normalised=(y_train_raw-mean(y_train_raw))/sd(y_train_raw)
 y_test_normalised=(y_test_raw-mean(y_test_raw))/sd(y_test_raw)
@@ -89,16 +79,14 @@ df_meta_train[0:3,]
 
 ```{r LSTM}
 Model<-nn_module(
-  
   initialize = function(input_dim, hidden_dim, num_layers=2){
     self$lstm<-nn_lstm(input_size=input_dim, hidden_size=hidden_dim, num_layers=2, dropout=0.3)
     
-    self$fc1<-nn_sequential(nn_linear(in_features=hidden_dim, out_features=64), nn_relu())
+    self$fc1<-nn_sequential(nn_linear(in_features=hidden_dim, out_features=32), nn_relu())
     
+    #self$fc2<-nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
         
-    self$fc2=nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
-        
-    self$fc3=nn_sequential(nn_linear(in_features=32, out_features=16), nn_relu())
+    self$fc3<-nn_sequential(nn_linear(in_features=32, out_features=16), nn_relu())
          
     self$fc4<-nn_linear(16, 1)
     
@@ -108,58 +96,41 @@ Model<-nn_module(
     out<-self$lstm(torch_stack(x,1))
     #out<-out[[1]]$squeeze(1)
     #out<-torch_stack(out[[1]],1)
-    y = self$fc1(out[[1]]$squeeze(1))
-    y = self$fc2(y)
-    y = self$fc3(y)
-
-    y<-self$fc4(y)
-    y
+    y <- self$fc1(out[[1]]$squeeze(1))
+    #y <- self$fc2(y)
+    y <- self$fc3(y)
+    y <-self$fc4(y)
    
   }
 )
+```
 
+```{r test ,include=FALSE}
+#input_dim<-11
+#hidden_dim<-256
+
+#lstm<-nn_lstm(input_size=input_dim, hidden_size=hidden_dim, num_layers=2, dropout=0.3)
+#fc1<-nn_sequential(nn_linear(in_features=hidden_dim, out_features=64), nn_relu())
+#fc2<-nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
+#fc3<-nn_sequential(nn_linear(in_features=32, out_features=16), nn_relu())
+#fc4<-nn_linear(16, 1)
+#x<-x_train
+#dim(x)
+#out<-lstm(torch_stack(x,1))
+#dim(out[[1]])
+
+#out[[2]]
+#y<-fc1(out[[1]])
+#x<-fc2(y)
+#o<-fc3(x)
+#p<-fc4(o)
+#dim(p$squeeze(1))
 
 ```
 
-```{r}
-y_pred = model(x)
-```
-
-
-```{r}
-dim(x)
-dim(torch_stack(x,1))
-xx=torch_stack(x,1)
-lstm_model<-nn_lstm(input_size=11, hidden_size=256, num_layers=2, dropout=0.1)
-out<-lstm_model(xx)
-#out<-out[[1]]$squeeze(1)
-
-#torch_stack(out[[1]],1)
-dim(out[[1]])
-
-mlp<-nn_sequential(nn_linear(in_features=256, out_features=64), nn_relu())
-
-out_new<-mlp(out[[1]]$squeeze(1))
-
-dim(out_new)
-dim(out_new$squeeze(1))
-
-mlp1<-nn_sequential(nn_linear(in_features=64, out_features=16), nn_relu())
-aaa<-mlp1(out_new)
-dim(aaa)
-lin<-nn_linear(16, 1)
-bbb<-lin(aaa)
-class(bbb)
-bbb$size()
-
-dim(bbb)
-bbb[1][1]
-dim(y)
-```
 
 ```{r}
 # prepare the array for training
-
 y_train=as.matrix(y_train_normalised)
 y_test=as.matrix(y_test_normalised)
 x_train=as.matrix(df_sensor_train)
@@ -173,8 +144,8 @@ conditional_test=as.matrix(df_meta_test)
 ```{r}
 # define arguments
 torch_manual_seed(40)
-n_epochs=2
-#DEVICE = if (cuda.is_available()){return("cuda")} else{return("cpu")}
+n_epochs=30
+DEVICE = if (cuda_is_available()){c("cuda")}else{c("cpu")}
 INPUT_FEATURES = ncol(df_sensor_train)
 HIDDEN_DIM = 256
 CONDITIONAL_FEATURES = ncol(df_meta_train)
@@ -191,9 +162,6 @@ optimizer = optim_adam(model$parameters,lr=0.1)
 ```
 
 
-
-
-
 ```{r}
 # training model with defined epochs
 r2 = c()
@@ -201,15 +169,14 @@ for (epoch in 1:n_epochs){
     train_loss = 0.0
     train_r2 = 0.0
     model$train()
-    
     x=x_train
     y=y_train
-
     conditional=conditional_train
     x=torch_tensor(x,dtype=torch_float())
     y=torch_tensor(y,dtype=torch_float())
     c=torch_tensor(conditional,dtype=torch_float())
     y_pred = model(x)
+    
     optimizer$zero_grad()
     loss = nnf_mse_loss(y_pred,y)
     loss$backward()
@@ -220,24 +187,23 @@ for (epoch in 1:n_epochs){
 
     model$eval()
     with_no_grad({
-            x = torch_FloatTensor(x_test)#$cuda()
-            y = torch_FloatTensor(y_test)#$cuda()
-            c = torch_FloatTensor(conditional_test)#$cuda()
-            y_pred = model(x, c)
+            x = torch_tensor(x_test,dtype=torch_float())#$cuda()
+            y = torch_tensor(y_test,dtype=torch_float())#$cuda()
+            c = torch_tensor(conditional_test,dtype=torch_float())#$cuda()
+            y_pred = model(x)
             test_loss =nnf_mse_loss(y_pred,y)
             #test_r2=r2_score(y_true=y.detach().cpu().numpy(),y_pred=y_pred.detach().cpu().numpy())
-            test_r2=rsq(y,y_pred)
+            test_r2=rsq(as.numeric(y),as.numeric(y_pred))
             r2=c(r2,test_r2)
-            if (test_r2 >= max(r2)){
-                # cv_pred= y_pred.detach().cpu().numpy().flatten().tolist()}
-                  cv_pred= list(y_pred)}
+            if (test_r2 >= max(r2)){ cv_pred= list(y_pred)}
             })
 }
 
 ```
 
-```{r}
+
+```{r message=F}
 library(R.utils)
 # R2 for the model
-printf(c("Site: %s\n", "R2: %s\n"), c(as.character(df$sitename[1]),y))
+printf(c("Site: %s\n", "R2: %s\n"), c(as.character(df$sitename[1]),max(r2)))
 ```
