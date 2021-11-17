@@ -1,42 +1,44 @@
----
-title: "mlflux_tutorial"
-output: html_document
----
+# LSTM in Flux Tutorial {#ch-14}
 
+### Example of LSTM+MLP on Flux data
+
+We will start with importing the needed packages. 
 ```{r install packages,warning=F, message=F}
 library(torch)
 library(luz)
 library(tidytable)
-library(tidyverse)
 ```
 
+Next, we import the dataset which including the daliy measurements of one site and glimpse the first row. 
 ```{r import data}
 df<-read.csv("df.csv")
 df[1,]
 ```
 
+We need only the predictors to pass through the model and then we will calculate the loss by comparing the predictions and the real values. Thus, next step is separating the predictors and the GPP values. 
 ```{r}
 # Separate X and y variables
 df_gpp<-df["GPP_NT_VUT_REF"]
 df_measure<-df[!names(df)%in% c("GPP_NT_VUT_REF")]
 ```
 
-
+Similar to other machine learning task, we split the dataframe into the train and test sets. Note that since we are using a time dependency model, we need to obtain a time-continous train set and test set. 
 ```{r}
 # define training and testing set
-set.seed(42)
 n<-nrow(df)
-test_ind<-c((n-ceiling(n*0.4)):n)
+test_ind<-c((n-ceiling(n*0.5)):n)
 y_test_raw<-df_gpp[test_ind,]
 y_train_raw<-df_gpp[-test_ind,]
 X_train_raw<-df_measure[-test_ind,]
 X_test_raw<-df_measure[test_ind,]
-y_test_raw[1:3]
 X_train_raw[1:3,]
+y_test_raw[1:3]
 ```
 
 
+The meta-data of the site is time invariant which does not pass through our LSTM. We will offer a choice of concatenating it before the MLP layer and we prepare it with one-hot encoding. Normalising the dataframe help stablising the training. Here we can build some useful functions.
 ```{r }
+#Normalising by variables
 normalize<-function(df){
   result<-df
   for(name in names(df)[-1]){
@@ -45,6 +47,7 @@ normalize<-function(df){
   return(result)
 }
 
+#Separate sensing and meta dataset
 prepare_df<-function(data, meta_columns=c("classid","igbp_land_use")){
   df_meta<-data[meta_columns]%>%get_dummies.(meta_columns)
   df_meta<-df_meta[,-c(1,2)]
@@ -53,16 +56,18 @@ prepare_df<-function(data, meta_columns=c("classid","igbp_land_use")){
   return(list(df_sensor, df_meta))
 }
  
+#Computing R2
 rsq<-function(x, y){cor(x, y)^2}
 
 ```
 
-
+Standardising and preparing the dataframes. As torch does not like dataframe as input, in the last part we change our "dataframe" into matrix form. 
 ```{r message=F}
-# Normalising by variables and separate sensing and meta data
+#Normalising the GPP values
 y_train_normalised=(y_train_raw-mean(y_train_raw))/sd(y_train_raw)
 y_test_normalised=(y_test_raw-mean(y_test_raw))/sd(y_test_raw)
 
+#Normalising predictors, obtain time dependent and time invariant dataframes
 X_train_prep=prepare_df(X_train_raw)
 df_sensor_train=X_train_prep[[1]]
 df_meta_train=X_train_prep[[2]]
@@ -70,40 +75,58 @@ df_meta_train=X_train_prep[[2]]
 X_test_prep=prepare_df(X_test_raw)
 df_sensor_test=X_test_prep[[1]]
 df_meta_test=X_test_prep[[2]]
+
+#Glimpes the normalised dataframe
 y_train_normalised[0:3]
 df_sensor_train[0:3,]
 df_meta_train[0:3,]
 
+#Prepare the matrix for training
+y_train=as.matrix(y_train_normalised)
+y_test=as.matrix(y_test_normalised)
+x_train=as.matrix(df_sensor_train)
+conditional_train=as.matrix(df_meta_train)
+x_test=as.matrix(df_sensor_test)
+conditional_test=as.matrix(df_meta_test)
 ```
 
-
+Here is the model LSTM+MLP Architecture. In `initialze` we define the object that needed for the model. We will use one lstm followed by three fully connected layers. If we would like to include the meta data, we put `conditional=1`, then the concatenation is done before the fully connected layers. A linear layer is necessary to map the final layer to the outputs. The function `forward` is defining the architecture of the model that compute from predictors to outputs. 
 ```{r LSTM}
 Model<-nn_module(
-  initialize = function(input_dim, hidden_dim, num_layers=2){
+  initialize = function(input_dim, conditional_dim, hidden_dim, conditional, num_layers=2){
     self$lstm<-nn_lstm(input_size=input_dim, hidden_size=hidden_dim, num_layers=2, dropout=0.3)
-    
-    self$fc1<-nn_sequential(nn_linear(in_features=hidden_dim, out_features=32), nn_relu())
-    
-    #self$fc2<-nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
-        
+    self$conditional = conditional
+    if (self$conditional==1){
+            self$fc1 = nn_sequential(
+            nn_linear(in_features=hidden_dim+conditional_dim, out_features=64),
+            nn_relu())
+            }else{
+              self$fc1<-nn_sequential(nn_linear(in_features=hidden_dim, out_features=32), nn_relu())
+             
+            }
+    self$fc2<-nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
     self$fc3<-nn_sequential(nn_linear(in_features=32, out_features=16), nn_relu())
-         
     self$fc4<-nn_linear(16, 1)
     
   },
   
-  forward=function(x){
-    out<-self$lstm(torch_stack(x,1))
-    #out<-out[[1]]$squeeze(1)
-    #out<-torch_stack(out[[1]],1)
-    y <- self$fc1(out[[1]]$squeeze(1))
-    #y <- self$fc2(y)
-    y <- self$fc3(y)
+  forward=function(x,c){
+    out<-self$lstm(torch_stack(x,1)) 
+    out<-out[[1]]$squeeze(1)
+    if (self$conditional==1){
+     out = torch_cat(list(out,c), dim=2) 
+    }
+    
+    y <- self$fc1(out)  
+    y <- self$fc2(y)
+    y <-self$fc3(y)
     y <-self$fc4(y)
-   
+    
   }
 )
 ```
+
+
 
 ```{r test ,include=FALSE}
 #input_dim<-11
@@ -116,8 +139,11 @@ Model<-nn_module(
 #fc4<-nn_linear(16, 1)
 #x<-x_train
 #dim(x)
+#c=conditional_train
+#dim(c)
 #out<-lstm(torch_stack(x,1))
 #dim(out[[1]])
+#out = torch_cat(list(out[[1]]$squeeze(1),c), dim=2) 
 
 #out[[2]]
 #y<-fc1(out[[1]])
@@ -128,73 +154,81 @@ Model<-nn_module(
 
 ```
 
-
+We define the parameters for the model. The `INPUT_FEATURES` is number of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) for the LSTM. `CONDITIONAL_FEATURES` is the dimention of the metadata. 
 ```{r}
-# prepare the array for training
-y_train=as.matrix(y_train_normalised)
-y_test=as.matrix(y_test_normalised)
-x_train=as.matrix(df_sensor_train)
-conditional_train=as.matrix(df_meta_train)
-x_test=as.matrix(df_sensor_test)
-conditional_test=as.matrix(df_meta_test)
-
-```
-
-
-```{r}
-# define arguments
+#fixed seed
 torch_manual_seed(40)
+
+#define number of epoch we want to run
 n_epochs=30
+
+#the device we want to run the model # TODO use $cuda() to summit to gpus
 DEVICE = if (cuda_is_available()){c("cuda")}else{c("cpu")}
+
+#model parameters
 INPUT_FEATURES = ncol(df_sensor_train)
 HIDDEN_DIM = 256
 CONDITIONAL_FEATURES = ncol(df_meta_train)
-
+conditional=0
 ```
 
-
+We put the parameter together with model architecture and obtain the corresponding optimizer. 
 ```{r}
 # define model and optimizer
-# use $cuda() to summit to gpus
-model = Model(INPUT_FEATURES, HIDDEN_DIM)
+model = Model(INPUT_FEATURES,CONDITIONAL_FEATURES, HIDDEN_DIM,1)$to(device=DEVICE)
 optimizer = optim_adam(model$parameters,lr=0.1)
-
 ```
 
-
+Here is the training step. 
 ```{r}
 # training model with defined epochs
 r2 = c()
+train_loss = 0.0
+train_r2 = 0.0
 for (epoch in 1:n_epochs){
-    train_loss = 0.0
-    train_r2 = 0.0
+  
+    #put the model in train mode in which parameters are learnt in the backward pass
     model$train()
+    
+    #prepare dataset and put it into tensor
     x=x_train
     y=y_train
     conditional=conditional_train
-    x=torch_tensor(x,dtype=torch_float())
-    y=torch_tensor(y,dtype=torch_float())
-    c=torch_tensor(conditional,dtype=torch_float())
-    y_pred = model(x)
+    x=torch_tensor(x,dtype=torch_float())$to(device=DEVICE)
+    y=torch_tensor(y,dtype=torch_float())$to(device=DEVICE)
+    c=torch_tensor(conditional,dtype=torch_float())$to(device=DEVICE)
     
+    y_pred = model(x,c)
     optimizer$zero_grad()
+    
+    #compute the mse loss
     loss = nnf_mse_loss(y_pred,y)
+    
+    #update the parameter
     loss$backward()
     optimizer$step()
+    
+    #compute the loss and R2 in the training
     train_loss = train_loss+loss$item()
-    #train_r2 = train_r2 + r2_score(y_true=y.detach().cpu().numpy(), y_pred=y_pred.detach().cpu().numpy())
     train_r2 = train_r2 + rsq(as.numeric(y),as.numeric(y_pred))
 
+    #put the model in evaluation mode in which the parameters will not be updated.
     model$eval()
+    
+    #pass the test set into the model and compute the R2
     with_no_grad({
             x = torch_tensor(x_test,dtype=torch_float())#$cuda()
             y = torch_tensor(y_test,dtype=torch_float())#$cuda()
             c = torch_tensor(conditional_test,dtype=torch_float())#$cuda()
-            y_pred = model(x)
-            test_loss =nnf_mse_loss(y_pred,y)
-            #test_r2=r2_score(y_true=y.detach().cpu().numpy(),y_pred=y_pred.detach().cpu().numpy())
+            y_pred = model(x,c)
+            
+            #compute the loss
             test_r2=rsq(as.numeric(y),as.numeric(y_pred))
             r2=c(r2,test_r2)
+            
+            
+            
+            #save the predictions 
             if (test_r2 >= max(r2)){ cv_pred= list(y_pred)}
             })
 }
@@ -202,6 +236,7 @@ for (epoch in 1:n_epochs){
 ```
 
 
+Printing the result with names of the site and the r2 we got. 
 ```{r message=F}
 library(R.utils)
 # R2 for the model
