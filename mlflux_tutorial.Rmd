@@ -2,33 +2,36 @@
 
 ### Motivation
 
-XXX add the following contents
+Machine learning and deep learning allows us to model the complex relationship between predictors and target variables. However, many popular models are time-agnostic such as random forest(RF) and fully-connected neural network(DNN). They assume the data comes in one timestamp, and we can shuffle the inputs without influencing the outputs. This assumption is not true in a lot of the studies. When we record the measurements in a range of time-span, we sometimes expect to see a trend depending on the collected time. The data naturally contains the time-dependency. Thus, it will be useful to have a model considering these temporal dependencies along with time-invariant metadata. In this tutorial, we will learn about LSTM+MLP to achieve this goal. 
 
--   Explain independence assumption, and that feed-forward DNN (as well as many other widely used ML algorithms) are time-agnostic ("sequence-agnostic").
-
--   Explain that some data has temporal dependencies by nature and modelling for these data requires ML that can learn them.
-
--   Explain that we can also combine time-invariant data with temporal data in "special" model architectures.
-
--   Introduce example data
-
-XXX since we have only one site, it doesn't make sense to include the meta data into model training. Respective variables are essentially zero-variance variables! Let's keep this for a next chapter and only treat the time-dynamic variables here.
+We again use the FLUXNET dataset in this chapter. The measurements are at the daily resolution used together with the metadata from every site to predict `GPP_NT_VUT_REF`. We will use a new machine learning framework called `torch` developed based on `PyTorch`. It is a neural network library that computes the differentiation automatically and is powerful in GPU acceleration.  
 
 ### LSTM
+Long Short-Term Memory neural network is a type of recurrent neural network. The inputs and outputs of LSTM are time-depended sequence. Compared to simple RNN model vanishing gradient problem is solved. Here is the details of the LSTM cell. For every time stamp we pass the data through such cell to compute the outputs. 
 
--   Explain the functioning of an LSTM cell referring to the blog post
+![lstm](graph/lstm_withsymbol.png)
+$$i_t =  \sigma(W_{ii}x_t + b_{ii} +W_{hi}h(t-1) + b_{hi})$$
+$$f_t = \sigma(W_{if}x_t + b_{if} +W_{hf}h(t-1) + b_{hf})$$
 
--   Explain why and how LSTMs can be combined with fully connected layers a DNN
+$$\tilde{C}_t = tanh(W_{ig}x_t + b_{ig}+W_{hg}h(t-1) + b_{hg})$$
+$$o_t = \sigma(W{io}x_t + b_{io} +W_{ho}h(t-1) + b_{ho})$$
+$$C_t = f_tC_{(t-1)} + i_tg_t$$
+$$h_t = o_{t}tanh(c_t)$$
+where $h_t$ is the hidden state at time t, $c_t$ is the cell state at time t, $x_t$ is the input at time t, $h_{(t-1)}$ is
+the hidden state of the previous layer at time $t-1$ or the initial hidden state at time 0, and $i_t, f_t, \tilde{C}_t,
+o_t$ are the input, forget, cell, and output gates, respectively. $\sigma$ is the sigmoid function.
 
-XXX General
+### MLP
+Multi-layer perception model is a type of artificial neural network(ANN). Every neural in a single layer is connected to all the neural in the next layer, so you can also see it is refereed as fully-connected neural network in some context. The edges are where we call the weights which are the important parameters to be learned in the training. Every layer contains the linear mapping and a non-linear "activation function", except for the output layer. The output layer applies a linear function to give rise to the output. 
 
--   The dataframe `df` now contains no date information. I know, this is not used in the training, but should be kept for visualisation purposes. We have to show that the data is a sequence over dates.
--   Use a different site, e.g., CH-Dav or CH-Lae
+![MLP](graph/mlp_diagram.png)
+As LSTM only take care of the time-dependent values, we use LSTM+MLP to handle both type of data. The concatenated time invariant variables and the outputs of the hidden layer in LSTM used as the inputs of MLP. At the training step of such model, in the `forward` pass, we map inputs and the initial value of the weights to the outputs. In the `backward` pass we need to do two things to learn the parameter. One is computing the derivative with respect to the parameter by chain rule and the other is updating the values with chosen optimization function. As you can see later these two steps are corresponding to `loss$backward()` and `optimizer$step()` in torch. A commonly seen optimization function is gradient descent. 
 
-### Example of LSTM+MLP on Flux data
+$$\boldsymbol{w}_{n+1}=\boldsymbol{w}_{n}-\gamma \nabla f(\boldsymbol{w}_{n})$$
+where $\boldsymbol{w}$ is the parameter, $\gamma$ is the learning rate and $\boldsymbol{w}_{n}$ is the derivative with respect to the parameter.
 
-We will start with importing the needed packages.
-
+#### Example of apply the model on one site data
+We first start with a toy example of using LSTM+MLP with the data from one site. Let's start with importing the needed packages.
 ```{r install packages,warning=F, message=F}
 library(torch)
 library(luz)
@@ -38,38 +41,39 @@ library(skimr)
 library(recipes)
 ```
 
-Next, we import the dataset which including the daliy measurements of one site and glimpse the first row.
-
-```{r import data}
-df  <-  read_csv("data/df.csv")
+Next, we import the dataset which including the daily measurements of one site and glimpse the summaries of the dataset.
+```{r import data ,warning=F, message=F}
+df<- read_csv("data/df_CH-Lae.csv")
 skim(df)
 ```
 
-XXX keep temporal data and site meta info in separate files and handle data frames separately
-
+Since the meta info of site does not change with time, we would like to keep temporal data and site metadata in separate files and handle data frames separately. 
 ```{r}
+# define the meta variables and extract the site dataframe
 meta_vars <- c("classid", "koeppen_code", "igbp_land_use", "plant_functional_type") 
 df_sites <- df %>% 
   select(sitename, one_of(meta_vars)) %>% 
   distinct()
 
+# define the measurement variables and extract the sensor dataframe
 vars <- c("TA_F", "TA_F_DAY", "TA_F_NIGHT", "SW_IN_F", "LW_IN_F", "VPD_F", "PA_F", "P_F", "WS_F")
-
 ddf <- df %>% 
   select(-one_of(meta_vars))
+ddf <- df %>% 
+  select(-"date")
 
+# save the dataframe for further analysis 
 write_csv(df_sites, file = "data/df_sites.csv")
 write_csv(ddf, file = "data/ddf.csv")
 ```
 
-```{r}
+```{r, message=F}
+# import the data
 df_sites <- read_csv("data/df_sites.csv")
 ddf <- read_csv("data/ddf.csv")
 ```
 
-We need only the predictors to pass through the model and then we will calculate the loss by comparing the predictions and the real values. Thus, next step is separating the predictors and the GPP values.
-
-XXX this step is combined below XXX
+For neural networks, we only pass the predictors through the model, thus in the next step we separate the target variable (GPP values) from the dataset. The GPP values will be used in the step of calculating the loss of the model to update/learn the parameters. 
 
 ```{r}
 # Separate X and y variables
@@ -77,12 +81,10 @@ df_gpp <- df %>% select(GPP_NT_VUT_REF)
 df_measure <- df %>% select(-GPP_NT_VUT_REF)
 ```
 
-Similar to other machine learning task, we split the dataframe into the train and test sets. Note that since we are using a time dependency model, we need to obtain a time-continous train set and test set.
-
--   XXX You split it by 50%. This is more testing than usual. Is this on purpose? Please explain.
+Similar to other machine learning task, we split the dataframe into the train and test sets. Note that since we are using a time dependency model, we need to obtain a time-continuous train set and test set. 
 
 ```{r}
-idx_train <- seq(ceiling(0.5 * nrow(df)))
+idx_train <- seq(ceiling(0.7 * nrow(df)))
 ddf_train <- ddf %>% 
   slice(idx_train)
 ddf_test <- ddf %>% 
@@ -92,49 +94,10 @@ ddf_test <- ddf %>%
 ```{r}
 ggplot() +
   geom_line(data = ddf %>% mutate(idx = 1:nrow(.)), aes(idx, GPP_NT_VUT_REF)) +
-  geom_vline(xintercept = max(idx_train), linetype = "dashed")
+  geom_vline(xintercept = max(idx_train), linetype = "dashed")+ggtitle("Visualising the train and test split")
 ```
 
-<!-- XXX may delete cell below -->
-
-<!-- ```{r} -->
-
-<!-- # determine row indices used for for testing -->
-
-<!-- n <- nrow(df) -->
-
-<!-- test_ind <- c((n-ceiling(n*0.5)):n) -->
-
-<!-- X_train_raw <- df %>%  -->
-
-<!--   slice(-test_ind) %>%  -->
-
-<!--   select(-GPP_NT_VUT_REF) -->
-
-<!-- y_train_raw <- df %>%  -->
-
-<!--   slice(-test_ind) %>%  -->
-
-<!--   select(GPP_NT_VUT_REF) -->
-
-<!-- X_test_raw <-  df %>%  -->
-
-<!--   slice(test_ind) %>%  -->
-
-<!--   select(-GPP_NT_VUT_REF) -->
-
-<!-- y_test_raw <- df %>%  -->
-
-<!--   slice(test_ind) %>%  -->
-
-<!--   select(GPP_NT_VUT_REF) -->
-
-<!-- ``` -->
-
-The meta-data of the site is time invariant which does not pass through our LSTM. We will offer a choice of concatenating it before the MLP layer and we prepare it with one-hot encoding. Normalising the data is required the training. Here we can build some useful functions.
-
-XXX use recipes package (introduce in our course) and perform centering and scaling on training data
-
+We perform normalizing/centering/scaling with recipes package on training and testing data. 
 ```{r}
 ## define recipe
 myrecipe_ddf <- recipe(
@@ -150,114 +113,29 @@ pp <- prep(myrecipe_ddf, training = ddf_train)
 ## apply the same normalisation to training and testing
 ddf_train_norm <- bake(pp, ddf_train)
 ddf_test_norm <- bake(pp, ddf_test)
-```
-
-XXX may delete the cells below
-
-```{r }
-#Normalising by variables
-normalize <- function(df){
-  result <- df
-  for(name in names(df)[-1]){
-    result[name]=(df[name][,1] - mean(df[name][,1])) / sd(df[name][,1])
-  }
-  return(result)
-}
-
-#Separate sensing and meta dataset
-prepare_df <- function(data, meta_columns = c("classid","igbp_land_use")){
-  df_meta <- data[meta_columns] %>% get_dummies.(meta_columns)
-  df_meta <- df_meta[,-c(1,2)]
-  sensor_data <- data[!names(data)%in%c("sitename","plant_functional_type","koeppen_code","classid","igbp_land_use")]
-  df_sensor <- normalize(sensor_data)
-  return(list(df_sensor, df_meta))
-}
- 
-#Computing R2
-rsq <- function(x, y){cor(x, y)^2}
 
 ```
 
-Standardising and preparing the dataframes. As torch does not like dataframe as input, in the last part we change our "dataframe" into matrix form.
-
-XXX here you determine the mean and sd separately on the training *and* the test set. I think we should apply the parameters determined on the test set on both the test and training set. This is implemented by the recipes steps above.
-
-<!-- ```{r message=F} -->
-
-<!-- # Normalising the GPP values -->
-
-<!-- y_train_normalised <- (y_train_raw - mean(y_train_raw))/sd(y_train_raw) -->
-
-<!-- y_test_normalised <- (y_test_raw - mean(y_test_raw))/sd(y_test_raw) -->
-
-<!-- # Normalising predictors, obtain time dependent and time invariant dataframes -->
-
-<!-- X_train_prep <- prepare_df(X_train_raw) -->
-
-<!-- df_sensor_train <- X_train_prep[[1]] -->
-
-<!-- df_meta_train <- X_train_prep[[2]] -->
-
-<!-- X_test_prep <- prepare_df(X_test_raw) -->
-
-<!-- df_sensor_test <- X_test_prep[[1]] -->
-
-<!-- df_meta_test <- X_test_prep[[2]] -->
-
-<!-- # Glimpes the normalised dataframe -->
-
-<!-- y_train_normalised[0:3] -->
-
-<!-- df_sensor_train[0:3,] -->
-
-<!-- df_meta_train[0:3,] -->
-
-<!-- # Prepare the matrix for training -->
-
-<!-- y_train <- as.matrix(y_train_normalised) -->
-
-<!-- y_test <- as.matrix(y_test_normalised) -->
-
-<!-- x_train <- as.matrix(df_sensor_train) -->
-
-<!-- conditional_train <- as.matrix(df_meta_train) -->
-
-<!-- x_test <- as.matrix(df_sensor_test) -->
-
-<!-- conditional_test <- as.matrix(df_meta_test) -->
-
-<!-- ``` -->
-
-Here is the model LSTM+MLP Architecture. In `initialze` we define the object that is needed for the model. We will use one LSTM followed by three fully connected layers. If we would like to include the meta data, we put `conditional = 1`, then the concatenation is done before the fully connected layers. A linear layer is necessary to map the final layer to the outputs. The function `forward` is defining the architecture of the model that compute from predictors to outputs.
-
-XXX
-
--   provide more explanations, is `initialize` used to specify the architecture?
-
--   explain `forward`: how values are passed on between layers?
-
--   you may drop the `conditional` option. But keep the code for a later chapter where we can use it.
-
--   Explain the sizes of `in_features` and `out_features`.
+Here is the model LSTM+MLP Architecture. In `initialze` we define the objects that is needed for the model, including the function and the variables. We will use one LSTM followed by three fully connected layers. A final linear layer is necessary to map the last hidden layer to the outputs. The function `forward` is defining the architecture of the model that compute from predictors to outputs and how we pass the values through every layers. `in_features` and `out_features` are the number of edges attach to the node at that layer. Note that since in this case the metadata is the same for all the points, how to utilize the metadata in the model will be introduced in the next section.
 
 ```{r LSTM}
+
 mymodule_generator <- nn_module(
   
   initialize = function(input_dim, 
                         # conditional_dim, 
                         hidden_dim, 
                         # conditional, 
-                        num_layers = 2
+                        num_layers = 1 # we have a default of 1 here
                         ){
     
     self$lstm <- nn_lstm(
       input_size = input_dim, 
       hidden_size = hidden_dim, 
-      num_layers = 2, 
-      dropout = 0.3
+      num_layers = num_layers
       )
     
-    self$conditional <- 0 # conditional
+    #self$conditional <- 0 # conditional
     
     # if (self$conditional == 1){
     #   self$fc1 <- nn_sequential(
@@ -290,11 +168,10 @@ mymodule_generator <- nn_module(
     
   },
   
-  forward = function(x){     # , c  XXX removed argument 'c'
+  forward = function(x){    
     
-    ## xxx explain this
-    out <- self$lstm(torch_stack(x, 1))
-    out <- out[[1]]$squeeze(1)
+    out <- self$lstm(torch_stack(x, 1))#concatenate the sequence of tensors by row
+    out <- out[[1]]$squeeze(1) #take the output in hidden state and squzze on the unused dimension
     
     # if (self$conditional == 1){
     #  out <- torch_cat(list(out,c), dim = 2) 
@@ -313,7 +190,7 @@ mymodule_generator <- nn_module(
 #input_dim <- 11
 #hidden_dim <- 256
 
-#lstm <- nn_lstm(input_size=input_dim, hidden_size=hidden_dim, num_layers=2, dropout=0.3)
+#lstm <- nn_lstm(input_size=input_dim, hidden_size=hidden_dim, num_layers=1)
 #fc1 <- nn_sequential(nn_linear(in_features=hidden_dim, out_features=64), nn_relu())
 #fc2 <- nn_sequential(nn_linear(in_features=64, out_features=32), nn_relu())
 #fc3 <- nn_sequential(nn_linear(in_features=32, out_features=16), nn_relu())
@@ -322,7 +199,10 @@ mymodule_generator <- nn_module(
 #dim(x)
 #c=conditional_train
 #dim(c)
+
 #out <- lstm(torch_stack(x,1))
+#length(out)
+
 #dim(out[[1]])
 #out = torch_cat(list(out[[1]]$squeeze(1),c), dim=2) 
 
@@ -335,9 +215,7 @@ mymodule_generator <- nn_module(
 
 ```
 
-We define the parameters for the model. The `INPUT_FEATURES` is number of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) for the LSTM. `CONDITIONAL_FEATURES` is the dimention of the metadata.
-
-XXX explain 256: how does it relate to number of nodes in our hidden layers
+We define the parameters for the model. The `INPUT_FEATURES` is number of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) in the output of the LSTM to MLP.
 
 ```{r}
 # fixed seed
@@ -346,16 +224,16 @@ torch_manual_seed(40)
 # define number of epoch we want to run
 n_epochs <- 30
 
-# the device we want to run the model # TODO use $cuda() to summit to gpus
+# the device we want to run the model
 DEVICE <- if (cuda_is_available()){c("cuda")} else {c("cpu")}
 
 # model parameters
 INPUT_FEATURES <- ncol(ddf_train_norm %>% 
                          select(-GPP_NT_VUT_REF)
-                       ) # ncol(df_sensor_train)
+                       ) 
 HIDDEN_DIM <- 256
 # CONDITIONAL_FEATURES <- ncol(df_meta_train)
-conditional <- 0
+#conditional <- 0
 ```
 
 We put the parameter together with model architecture and obtain the corresponding optimizer.
@@ -366,10 +244,13 @@ model <- mymodule_generator(
   INPUT_FEATURES,
   # CONDITIONAL_FEATURES, 
   HIDDEN_DIM,
-  1 ## is this for num_layers? it seems to be hard-coded in the model specification
+  num_layers=1 
   )$to(device = DEVICE)
 
 optimizer <- optim_adam(model$parameters, lr = 0.1)
+
+#Prepare the function computing R2
+rsq <- function(x, y){cor(x, y)^2}
 ```
 
 Here is the training step.
@@ -384,11 +265,8 @@ for (epoch in 1:n_epochs){
   
     # put the model in train mode in which parameters are learnt in the backward pass
     model$train()
-    
-    # prepare dataset and put it into tensor
-    # x <- x_train
-    # y <- y_train
-    # conditional <- conditional_train
+  
+    # Since "torch" operates on the data type "tensor" and the function only accept R atomic vector. So we transform the dataframe to matrix then to tensor data type 
     x <- torch_tensor(ddf_train_norm %>% 
                         select(-GPP_NT_VUT_REF) %>% 
                         as.matrix(), 
@@ -404,7 +282,6 @@ for (epoch in 1:n_epochs){
     #                   dtype = torch_float()
     #                   )$to(device = DEVICE)
     
-    # y_pred <- model(x, c)
     y_pred <- model(x)
     optimizer$zero_grad()
     
@@ -439,7 +316,6 @@ for (epoch in 1:n_epochs){
 #                              dtype = torch_float()
 #                              )#$cuda()
             
-            #y_pred <- model(x, c)
             y_pred <- model(x)
             
             #compute the loss
@@ -463,7 +339,7 @@ printf(c("Site: %s\n", "R2: %s\n"), c(as.character(df$sitename[1]), max(r2)))
 
 Visualise results.
 
-```{r}
+```{r  ,warning=F,message=F}
 cv_pred[[1]] %>% as.numeric() %>% hist()
 
 mean <- tidy(pp, id = "normalize") %>%
