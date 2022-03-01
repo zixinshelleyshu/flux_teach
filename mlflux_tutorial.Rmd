@@ -1,38 +1,98 @@
+---
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
 # LSTM in Flux Tutorial {#ch-14}
 
 ### Motivation
 
-Machine learning and deep learning allows us to model the complex relationship between predictors and target variables. However, many popular models are time-agnostic such as random forest(RF) and fully-connected neural network(DNN). They assume the data comes in one timestamp, and we can shuffle the inputs without influencing the outputs. This assumption is not true in a lot of the studies. When we record the measurements in a range of time-span, we sometimes expect to see a trend depending on the collected time. The data naturally contains the time-dependency. Thus, it will be useful to have a model considering these temporal dependencies along with time-invariant metadata. In this tutorial, we will learn about LSTM+MLP to achieve this goal. 
+Machine learning and deep learning allows us to model the complex
+relationship between predictors and target variables. However, many
+popular models are time-agnostic such as random forest (RF) and
+fully-connected deep neural networks (DNN). They assume that data has no
+temporal dependency and we can shuffle the inputs without influencing
+the outputs. This assumption is not true in a lot of the studies. When
+we record the measurements in a range of time-span, we sometimes expect
+to see a trend depending on the collected time. Often, data naturally
+contains the time-dependency. Thus, it will be useful to have a model
+considering these temporal dependencies along with time-invariant
+metadata. In this tutorial, we will learn about using Long Short-Term
+Memory cells in deep neural network architectures to achieve this goal.
 
-We again use the FLUXNET dataset in this chapter. The measurements are at the daily resolution used together with the metadata from every site to predict `GPP_NT_VUT_REF`. We will use a new machine learning framework called `torch` developed based on `PyTorch`. It is a neural network library that computes the differentiation automatically and is powerful in GPU acceleration.  
+We again use the FLUXNET dataset in this chapter. The measurements are
+at daily resolution and are used together with (time-invariant) metadata
+from each site to predict `GPP_NT_VUT_REF`. We will use a new machine
+learning framework called `torch` developed based on `PyTorch`. It is a
+neural network library that computes the differentiation automatically
+and is powerful in GPU acceleration.
 
 ### LSTM
-Long Short-Term Memory neural network is a type of recurrent neural network. The inputs and outputs of LSTM are time-depended sequence. Compared to simple RNN model vanishing gradient problem is solved. Here is the details of the LSTM cell. For every time stamp we pass the data through such cell to compute the outputs. 
 
-![lstm](graph/lstm_withsymbol.png)
+A Long Short-Term Memory (LSTM) neural network is a type of recurrent
+neural network. The inputs and outputs of LSTM are time-depended
+sequences. Compared to a simple RNN model, the *vanishing gradient
+problem* is solved. Here are the details of the LSTM cell. For every
+time stamp we pass the data through such a cell to compute the outputs.
+A more detailed explanation of LSTMs is given by [this post of Colah's
+Blog](https://colah.github.io/posts/2015-08-Understanding-LSTMs/).
+
+![lstm: XXX add figure caption explaining elements (not in
+text)](graph/lstm_withsymbol.png)
+
 $$i_t =  \sigma(W_{ii}x_t + b_{ii} +W_{hi}h(t-1) + b_{hi})$$
 $$f_t = \sigma(W_{if}x_t + b_{if} +W_{hf}h(t-1) + b_{hf})$$
 
 $$\tilde{C}_t = tanh(W_{ig}x_t + b_{ig}+W_{hg}h(t-1) + b_{hg})$$
 $$o_t = \sigma(W{io}x_t + b_{io} +W_{ho}h(t-1) + b_{ho})$$
-$$C_t = f_tC_{(t-1)} + i_tg_t$$
-$$h_t = o_{t}tanh(c_t)$$
-where $h_t$ is the hidden state at time t, $c_t$ is the cell state at time t, $x_t$ is the input at time t, $h_{(t-1)}$ is
-the hidden state of the previous layer at time $t-1$ or the initial hidden state at time 0, and $i_t, f_t, \tilde{C}_t,
-o_t$ are the input, forget, cell, and output gates, respectively. $\sigma$ is the sigmoid function.
+$$C_t = f_tC_{(t-1)} + i_tg_t$$ $$h_t = o_{t}tanh(c_t)$$
+
+where $h_t$ is the hidden state at time *t*, $c_t$ is the cell state at
+time *t*, $x_t$ is the input at time *t*, $h_{(t-1)}$ is the hidden
+state of the previous layer at time $t-1$ or the initial hidden state at
+time 0, and $i_t, f_t, \tilde{C}_t, o_t$ are the input, forget, cell,
+and output gates, respectively. $\sigma$ is the sigmoid function.
 
 ### MLP
-Multi-layer perception model is a type of artificial neural network(ANN). Every neural in a single layer is connected to all the neural in the next layer, so you can also see it is refereed as fully-connected neural network in some context. The edges are where we call the weights which are the important parameters to be learned in the training. Every layer contains the linear mapping and a non-linear "activation function", except for the output layer. The output layer applies a linear function to give rise to the output. 
 
-![MLP](graph/mlp_diagram.png)
-As LSTM only take care of the time-dependent values, we use LSTM+MLP to handle both type of data. The concatenated time invariant variables and the outputs of the hidden layer in LSTM used as the inputs of MLP. At the training step of such model, in the `forward` pass, we map inputs and the initial value of the weights to the outputs. In the `backward` pass we need to do two things to learn the parameter. One is computing the derivative with respect to the parameter by chain rule and the other is updating the values with chosen optimization function. As you can see later these two steps are corresponding to `loss$backward()` and `optimizer$step()` in torch. A commonly seen optimization function is gradient descent. 
+Multi-layer perception model is a type of artificial neural network
+(ANN). Every neural in a single layer is connected to all the neural in
+the next layer, so you can also see it is refereed as fully-connected
+neural network in some context. The edges are where we call the weights
+which are the important parameters to be learned in the training. Every
+layer contains the linear mapping and a non-linear "activation
+function", except for the output layer. The output layer applies a
+linear function to give rise to the output.
+
+![MLP XXX make this reflecting the architecture of the model implemented
+here: should be 32 and 16 nodes in the hidden layers. Also visualise how
+LSTM output is connected to MLP.](graph/mlp_diagram.png)
+
+As LSTM only take care of the time-dependent values, we use a combined
+LSTM+MLP to handle both type of data. The concatenated time invariant
+variables and the outputs of the hidden layer in LSTM used as the inputs
+of MLP. At the training step of such model, in the `forward` pass, we
+map inputs and the initial value of the weights to the outputs. In the
+`backward` pass we need to do two things to learn the parameter. One is
+computing the derivative with respect to the parameter by chain rule and
+the other is updating the values with chosen optimization function. As
+you can see later, these two steps are corresponding to
+`loss$backward()` and `optimizer$step()` in torch. A commonly seen
+optimization function is *gradient descent*.
 
 $$\boldsymbol{w}_{n+1}=\boldsymbol{w}_{n}-\gamma \nabla f(\boldsymbol{w}_{n})$$
-where $\boldsymbol{w}$ is the parameter, $\gamma$ is the learning rate and $\boldsymbol{w}_{n}$ is the derivative with respect to the parameter.
+
+where $\boldsymbol{w}$ is the parameter, $\gamma$ is the learning rate
+and $\boldsymbol{w}_{n}$ is the derivative with respect to the
+parameter.
 
 #### Example of apply the model on one site data
-We first start with a toy example of using LSTM+MLP with the data from one site. Let's start with importing the needed packages.
-```{r install packages,warning=F, message=F}
+
+We first start with a toy example of using LSTM+MLP with the data from
+one site. Let's start with importing the needed packages.
+
+```{r install packages, warning=F, message=F}
 library(torch)
 library(luz)
 library(tidytable)
@@ -41,13 +101,18 @@ library(skimr)
 library(recipes)
 ```
 
-Next, we import the dataset which including the daily measurements of one site and glimpse the summaries of the dataset.
-```{r import data ,warning=F, message=F}
-df<- read_csv("data/df_CH-Lae.csv")
+Next, we import the dataset which including the daily measurements of
+one site and glimpse the summaries of the dataset.
+
+```{r import data, warning=F, message=F}
+df <- read_csv("data/df_CH-Lae.csv")
 skim(df)
 ```
 
-Since the meta info of site does not change with time, we would like to keep temporal data and site metadata in separate files and handle data frames separately. 
+Since the meta info of site does not change with time, we would like to
+keep temporal data and site metadata in separate files and handle data
+frames separately.
+
 ```{r}
 # define the meta variables and extract the site dataframe
 meta_vars <- c("classid", "koeppen_code", "igbp_land_use", "plant_functional_type") 
@@ -58,9 +123,7 @@ df_sites <- df %>%
 # define the measurement variables and extract the sensor dataframe
 vars <- c("TA_F", "TA_F_DAY", "TA_F_NIGHT", "SW_IN_F", "LW_IN_F", "VPD_F", "PA_F", "P_F", "WS_F")
 ddf <- df %>% 
-  select(-one_of(meta_vars))
-ddf <- df %>% 
-  select(-"date")
+  select(-one_of(meta_vars), -"date")
 
 # save the dataframe for further analysis 
 write_csv(df_sites, file = "data/df_sites.csv")
@@ -73,15 +136,20 @@ df_sites <- read_csv("data/df_sites.csv")
 ddf <- read_csv("data/ddf.csv")
 ```
 
-For neural networks, we only pass the predictors through the model, thus in the next step we separate the target variable (GPP values) from the dataset. The GPP values will be used in the step of calculating the loss of the model to update/learn the parameters. 
+For neural networks, we only pass the predictors through the model, thus
+in the next step we separate the target variable (GPP values) from the
+dataset. The GPP values will be used in the step of calculating the loss
+of the model to update/learn the parameters.
 
 ```{r}
 # Separate X and y variables
-df_gpp <- df %>% select(GPP_NT_VUT_REF)
-df_measure <- df %>% select(-GPP_NT_VUT_REF)
+df_target <- df %>% select(GPP_NT_VUT_REF)
+df_predictors <- df %>% select(-GPP_NT_VUT_REF)
 ```
 
-Similar to other machine learning task, we split the dataframe into the train and test sets. Note that since we are using a time dependency model, we need to obtain a time-continuous train set and test set. 
+Similar to other machine learning task, we split the dataframe into the
+train and test sets. Note that since we are using a time dependency
+model, we need to obtain a time-continuous train set and test set.
 
 ```{r}
 idx_train <- seq(ceiling(0.7 * nrow(df)))
@@ -97,7 +165,10 @@ ggplot() +
   geom_vline(xintercept = max(idx_train), linetype = "dashed")+ggtitle("Visualising the train and test split")
 ```
 
-We perform normalizing/centering/scaling with recipes package on training and testing data. 
+We derive normalizing/centering/scaling parameters with the recipes
+package based on the training data, and apply them to normalize both
+training and testing data.
+
 ```{r}
 ## define recipe
 myrecipe_ddf <- recipe(
@@ -116,14 +187,23 @@ ddf_test_norm <- bake(pp, ddf_test)
 
 ```
 
-Here is the model LSTM+MLP Architecture. In `initialze` we define the objects that is needed for the model, including the function and the variables. We will use one LSTM followed by three fully connected layers. A final linear layer is necessary to map the last hidden layer to the outputs. The function `forward` is defining the architecture of the model that compute from predictors to outputs and how we pass the values through every layers. `in_features` and `out_features` are the number of edges attach to the node at that layer. Note that since in this case the metadata is the same for all the points, how to utilize the metadata in the model will be introduced in the next section.
+Now, we define is the model LSTM+MLP architecture. In `initialze` we
+define the objects that is needed for the model, including the function
+and the variables. We will use one LSTM followed by three fully
+connected layers. A final linear layer is necessary to map the last
+hidden layer to the outputs. The function `forward` is defining the
+architecture of the model that compute from predictors to outputs and
+how we pass the values through every layers. `in_features` and
+`out_features` are the number of edges attach to the node at that layer.
+Note that since in this case, the metadata is the same for all the
+points, how to utilize the metadata in the model will be introduced in
+the next section.
 
 ```{r LSTM}
-
 mymodule_generator <- nn_module(
   
   initialize = function(input_dim, 
-                        # conditional_dim, 
+                        # conditional_dim, XXX is this a comment or a commented-out argument. Please remove all code that is no longer needed (not just comment out).
                         hidden_dim, 
                         # conditional, 
                         num_layers = 1 # we have a default of 1 here
@@ -154,14 +234,17 @@ mymodule_generator <- nn_module(
     #     )
     # }
 
-    ## explain numbers and how they relate between layers    
-    self$fc1 <- nn_sequential(nn_linear(in_features = hidden_dim, out_features = 32),
+    ## xxx explain numbers and how they relate between layers    
+    self$fc1 <- nn_sequential(nn_linear(in_features = hidden_dim, 
+                                        out_features = 32),
                               nn_relu()
                               )
-    self$fc2 <- nn_sequential(nn_linear(in_features = 32, out_features = 32), 
+    self$fc2 <- nn_sequential(nn_linear(in_features = 32, 
+                                        out_features = 32), 
                               nn_relu()
                               )    # previously in_features = 64 caused an error
-    self$fc3 <- nn_sequential(nn_linear(in_features = 32, out_features = 16), 
+    self$fc3 <- nn_sequential(nn_linear(in_features = 32, 
+                                        out_features = 16), 
                               nn_relu()
                               )
     self$fc4 <- nn_linear(16, 1)
@@ -169,9 +252,12 @@ mymodule_generator <- nn_module(
   },
   
   forward = function(x){    
-    
-    out <- self$lstm(torch_stack(x, 1))#concatenate the sequence of tensors by row
-    out <- out[[1]]$squeeze(1) #take the output in hidden state and squzze on the unused dimension
+    # concatenate the sequence of tensors by row
+    out <- self$lstm(torch_stack(x, 1)) 
+
+    # take the output in hidden state and squeeze on the unused dimension
+    # xxx what does 'squeeze' mean?
+    out <- out[[1]]$squeeze(1) 
     
     # if (self$conditional == 1){
     #  out <- torch_cat(list(out,c), dim = 2) 
@@ -215,7 +301,12 @@ mymodule_generator <- nn_module(
 
 ```
 
-We define the parameters for the model. The `INPUT_FEATURES` is number of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) in the output of the LSTM to MLP.
+We define the parameters for the model. The `INPUT_FEATURES` is number
+of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) in the
+output of the LSTM to MLP.
+
+XXX Explain 256: why this number? how does it relate to what is shown in
+the LSTM schematic figure?
 
 ```{r}
 # fixed seed
@@ -236,20 +327,22 @@ HIDDEN_DIM <- 256
 #conditional <- 0
 ```
 
-We put the parameter together with model architecture and obtain the corresponding optimizer.
+We put the parameter together with model architecture and obtain the
+corresponding optimizer.
 
 ```{r}
 # define model and optimizer
 model <- mymodule_generator(
   INPUT_FEATURES,
-  # CONDITIONAL_FEATURES, 
+  # CONDITIONAL_FEATURES, # XXX delete if no longer used. You may keep this for a next chapter
   HIDDEN_DIM,
-  num_layers=1 
+  num_layers = 1 
   )$to(device = DEVICE)
 
+# XXX explain
 optimizer <- optim_adam(model$parameters, lr = 0.1)
 
-#Prepare the function computing R2
+# Prepare the function computing R2
 rsq <- function(x, y){cor(x, y)^2}
 ```
 
@@ -283,9 +376,12 @@ for (epoch in 1:n_epochs){
     #                   )$to(device = DEVICE)
     
     y_pred <- model(x)
+    
+    # xxx explain this step
     optimizer$zero_grad()
     
-    # compute the mse loss
+    # compute the mse loss 
+    # xxx better: 'specify MSE as the loss function'? (doesn't actually compute it here) 
     loss <- nnf_mse_loss(y_pred, y)
     
     # update the parameter
@@ -293,6 +389,7 @@ for (epoch in 1:n_epochs){
     optimizer$step()
     
     # compute the loss and R2 in the training
+    # xxx explain: what is 'loss$item()'?
     train_loss <- train_loss + loss$item()
     train_r2 <- train_r2 + rsq(as.numeric(y), as.numeric(y_pred))
 
@@ -300,6 +397,7 @@ for (epoch in 1:n_epochs){
     model$eval()
     
     # pass the test set into the model and compute the R2
+    # xxx explain 'with_no_grad()'
     with_no_grad({
             x <- torch_tensor(ddf_test_norm %>% 
                                 select(-GPP_NT_VUT_REF) %>% 
@@ -318,11 +416,11 @@ for (epoch in 1:n_epochs){
             
             y_pred <- model(x)
             
-            #compute the loss
+            # compute the loss
             test_r2 <- rsq(as.numeric(y), as.numeric(y_pred))
             r2 <- c(r2, test_r2)
             
-            #save the predictions 
+            # save the predictions 
             if (test_r2 >= max(r2)){cv_pred <- list(y_pred)}
             })
 }
@@ -350,7 +448,7 @@ sd <- tidy(pp, id = "normalize") %>%
   filter(terms == "GPP_NT_VUT_REF", statistic == "sd") %>%
   pull(value)
 
-ddf_train_norm %>% 
+tmp <- ddf_train_norm %>% 
   mutate(GPP_NT_VUT_REF = GPP_NT_VUT_REF * sd + mean,
          pred = NA
          ) %>% 
@@ -360,10 +458,30 @@ ddf_train_norm %>%
       mutate(GPP_NT_VUT_REF = GPP_NT_VUT_REF * sd + mean,
              pred = pred * sd + mean)
     ) %>% 
-  mutate(idx = 1:nrow(.)) %>% 
+  mutate(idx = 1:nrow(.))
+
+tmp %>% 
   ggplot() +
   geom_line(aes(idx, GPP_NT_VUT_REF)) +
   geom_line(aes(idx, pred), color = "red") +
   geom_vline(xintercept = max(idx_train), linetype = "dashed")
 
+tmp %>% 
+  ggplot(aes(pred, GPP_NT_VUT_REF)) +
+  geom_hex() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  scale_fill_gradientn(
+    colours = colorRampPalette( c("gray65", "navy", "red", "yellow"))(5)) +
+  xlim(-5, 20) + ylim(-5, 20) +
+  theme_classic()
+    
+
 ```
+
+XXX add explanation of whether there are any LSTM-specific
+hyperparameters to specify and what you would expect.
+
+XXX Show the same with data from 5 sites and time-invariant data
+included in model training. Can show it in a condensed form,
+highlighting the differences to above.
