@@ -448,7 +448,7 @@ sd <- tidy(pp, id = "normalize") %>%
   filter(terms == "GPP_NT_VUT_REF", statistic == "sd") %>%
   pull(value)
 
-ddf_train_norm %>% 
+tmp <- ddf_train_norm %>% 
   mutate(GPP_NT_VUT_REF = GPP_NT_VUT_REF * sd + mean,
          pred = NA
          ) %>% 
@@ -458,13 +458,30 @@ ddf_train_norm %>%
       mutate(GPP_NT_VUT_REF = GPP_NT_VUT_REF * sd + mean,
              pred = pred * sd + mean)
     ) %>% 
-  mutate(idx = 1:nrow(.)) %>% 
+  mutate(idx = 1:nrow(.))
+
+tmp %>% 
   ggplot() +
   geom_line(aes(idx, GPP_NT_VUT_REF)) +
   geom_line(aes(idx, pred), color = "red") +
   geom_vline(xintercept = max(idx_train), linetype = "dashed")
 
+tmp %>% 
+  ggplot(aes(pred, GPP_NT_VUT_REF)) +
+  geom_hex() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  scale_fill_gradientn(
+    colours = colorRampPalette( c("gray65", "navy", "red", "yellow"))(5)) +
+  xlim(-5, 20) + ylim(-5, 20) +
+  theme_classic()
+    
+
 ```
 
 XXX add explanation of whether there are any LSTM-specific
 hyperparameters to specify and what you would expect.
+
+XXX Show the same with data from 5 sites and time-invariant data
+included in model training. Can show it in a condensed form,
+highlighting the differences to above.
