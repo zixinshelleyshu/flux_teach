@@ -440,17 +440,17 @@ tmp %>%
 
 
 # LSTM with condition {#ch-15}
-In this chapter we will introduce a model which includes the time-invariant variables to compute the predictions. We can use this model to predict the GPP values on a new site. Thus, we evaluate it with the predictions of an unseen site. Here is a overview of the LSTM with condition in which the MLP is slightly tuned for better predictions. The "+" in the diagram means concatenation. 
+In this chapter we will introduce a model which includes the time-invariant variables to compute the predictions. The time-invariant variables are usually measurement of every sites. We can train this model on the data from multiple sites and predict the GPP values on a new site. Thus, we evaluate it with the predictions of an unseen site in the example. Here is an overview of the "LSTM with condition" in which the MLP is slightly tuned for better predictions. The "+" in the diagram means concatenation. 
 ![LSTM_withcondition](graph/lstm_withcond.png)
 
 ```{r message=FALSE}
 #Import a dataset with multiple sites
-df_five<- read_csv("data/df_fivesites.csv")
-skim(df_five)
+df_multi<- read_csv("data/df_multi.csv")
+skim(df_multi)
 ```
 
 
-```{r}
+```{r include=FALSE}
 #outlook the GPP values in the dataset
 #df_five<-df_five[df_five$sitename!="US-Var",]
 #df_five<-df_five[df_five$sitename!="US-GLE",]
@@ -467,12 +467,13 @@ skim(df_five)
 ```
 
 ```{r}
-selected_sitename<-unique(df_five$sitename)
+#get the name of sites
+selected_sitename<-unique(df_multi$sitename)
 
 #adding an index within sites with time ordering
 df_withind<-c()
 for(i in 1:length(selected_sitename)){
-   i_df<-df_five[df_five$sitename==selected_sitename[i],]
+   i_df<-df_multi[df_multi$sitename==selected_sitename[i],]
    i_df$inx<-seq(1,nrow(i_df),1)
    out<-i_df
    df_withind<-rbind(df_withind,out)}
@@ -480,25 +481,26 @@ for(i in 1:length(selected_sitename)){
 ggplot(df_withind, aes(inx, GPP_NT_VUT_REF,colour=sitename))+geom_line()
 
 ```
+
 Similar to the last chapter we save the time-dependent and time-invariant data separately to prepare for the training. 
 ```{r}
 # define the meta variables and extract the site dataframe
 meta_vars <- c("classid", "koeppen_code", "igbp_land_use", "plant_functional_type")
 
-df_sites <- df_five %>% 
+df_sites <- df_multi %>% 
   select(sitename, one_of(meta_vars)) 
-write_csv(df_sites,"data/df_meta_five.csv")
+write_csv(df_sites,"data/df_meta_multi.csv")
 
 # define the measurement variables and extract the sensor dataframe
 vars <- c("TA_F", "TA_F_DAY", "TA_F_NIGHT", "SW_IN_F", "LW_IN_F", "VPD_F", "PA_F", "P_F", "WS_F")
-ddf <-df_five %>% 
+ddf <-df_multi %>% 
   select(-one_of(meta_vars), -"date")
-write_csv(ddf,"data/df_sensor_five.csv")
+write_csv(ddf,"data/df_sensor_multi.csv")
 ```
 
 ```{r}
-df_meta_five<-read.csv("data/df_meta_five.csv")
-df_sensor_five<-read.csv("data/df_sensor_five.csv")
+df_meta_multi<-read.csv("data/df_meta_multi.csv")
+df_sensor_multi<-read.csv("data/df_sensor_multi.csv")
 
 ```
  
@@ -506,21 +508,20 @@ df_sensor_five<-read.csv("data/df_sensor_five.csv")
 Since the time-invariant data comes from meta-data of the sites, they are various from site to site. We encode the variables with one-hot encoding method and separate the train and test sets. 
 ```{r}
 #one-hot encoding for the time-invariant variables
-df_meta_dummy<-data.frame(get_dummies.(df_meta_five%>%select(-c("sitename","koeppen_code","plant_functional_type")))%>%select(-colnames(df_meta_five%>%select(-c("sitename","koeppen_code","plant_functional_type")))))
+df_meta_dummy<-data.frame(get_dummies.(df_meta_multi%>%select(-c("sitename","koeppen_code","plant_functional_type")))%>%select(-colnames(df_meta_multi%>%select(-c("sitename","koeppen_code","plant_functional_type")))))
                                                                                                                              
-df_meta_dummy$sitename<-df_meta_five$sitename
+df_meta_dummy$sitename<-df_meta_multi$sitename
 
 #select the site that we use for testing
-ind_CH_Lae<-c(df_five$sitename=="CH-Lae")
+ind_CH_Lae<-c(df_multi$sitename=="CH-Lae")
 
 
-#split the train set and test set
-meta_five_train<-df_meta_dummy[!ind_CH_Lae,]
-sensor_five_train<-df_sensor_five[!ind_CH_Lae,]
+#split the train set and test set. This time we take the whole site out as the test site. 
+meta_multi_train<-df_meta_dummy[!ind_CH_Lae,]
+sensor_multi_train<-df_sensor_multi[!ind_CH_Lae,]
 
-
-meta_five_test<-df_meta_dummy[ind_CH_Lae,]
-sensor_five_test<-df_sensor_five[ind_CH_Lae,]
+meta_multi_test<-df_meta_dummy[ind_CH_Lae,]
+sensor_multi_test<-df_sensor_multi[ind_CH_Lae,]
 
 ```
 
@@ -529,42 +530,24 @@ Similar to the last chapter we apply the recipes package on training and testing
 ## define recipe
 myrecipe_ddf <- recipe(
   GPP_NT_VUT_REF ~ TA_F + TA_F_DAY + TA_F_NIGHT + SW_IN_F + LW_IN_F + VPD_F + PA_F + P_F + WS_F + wscal + fpar,
-  data = sensor_five_train) %>% 
+  data = sensor_multi_train) %>% 
   step_normalize(all_numeric(), id = "normalize")
   # step_center(all_numeric()) %>%
   # step_scale(all_numeric())
 
 ## determine normalisation parameters (mean, sd) on training data (only!)
-pp <- prep(myrecipe_ddf, training = sensor_five_train)
+pp <- prep(myrecipe_ddf, training = sensor_multi_train)
 
 ## apply the same normalisation to training and testing
-sensor_five_train_norm <- bake(pp, sensor_five_train)
-sensor_five_test_norm <- bake(pp, sensor_five_test)
+sensor_multi_train_norm <- bake(pp, sensor_multi_train)
+sensor_multi_test_norm <- bake(pp, sensor_multi_test)
 
-sensor_five_train_norm$sitename<-sensor_five_train$sitename
+sensor_multi_train_norm$sitename<-sensor_multi_train$sitename
 
 ```
 
 ```{r}
-train_sites<-unique(sensor_five_train_norm$sitename)
 
-train_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  site_df<-sensor_five_train_norm[sensor_five_train_norm$sitename==train_sites[i],]
-  train_list[[i]]<-site_df%>%select(-"sitename","GPP_NT_VUT_REF")
-}
-
-gpp_train_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  site_df<-sensor_five_train_norm[sensor_five_train_norm$sitename==train_sites[i],]
-  gpp_train_list[[i]]<-site_df%>%select("GPP_NT_VUT_REF")
-}
-
-meta_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  meta_df<-meta_five_train[meta_five_train$sitename==train_sites[i],]
-  meta_list[[i]]<-meta_df%>%select(-"sitename")
-}
 
 ```
 
@@ -591,7 +574,7 @@ mymodule_generator_withcondition <- nn_module(
     if (self$conditional == 1){
        self$fc1 <- nn_sequential(
         nn_linear(
-           in_features = hidden_dim + conditional_dim, 
+           in_features = hidden_dim + conditional_dim, # the metadata are concatenated to the output of lstm here
            out_features =64
            ),
          nn_relu()) 
@@ -604,7 +587,7 @@ mymodule_generator_withcondition <- nn_module(
          )
      }
 
-     #in_feature is the dimension of the last layer and out_feature is the dimension of the next layer
+    #in_feature is the dimension of the last layer and out_feature is the dimension of the next layer
     
     self$fc2 <- nn_sequential(nn_linear(in_features=64, 
                                        out_features =64), 
@@ -652,12 +635,12 @@ n_epochs <- 30
 DEVICE <- if (cuda_is_available()){c("cuda")} else {c("cpu")}
 
 # model parameters
-INPUT_FEATURES <- ncol(sensor_five_train%>% 
+INPUT_FEATURES <- ncol(sensor_multi_train%>% 
                          select(-c("GPP_NT_VUT_REF","sitename")))
 
 HIDDEN_DIM <- 256# hyperparameter of connecting LSTM and MLP which is the dimension of the hidden layer that is connecting them
 
-CONDITIONAL_FEATURES <- ncol(meta_five_train)-1# the dimension of the condition feature is the number of column of meta-data after one-hot encoding
+CONDITIONAL_FEATURES <- ncol(meta_multi_train)-1# the dimension of the condition feature is the number of column of meta-data after one-hot encoding
 conditional <- 1#the indicator that we will use condition part in the model
 ```
 
@@ -680,26 +663,36 @@ optimizer <- optim_adam(model_condition$parameters, lr = 0.001)
 rsq <- function(x, y){cor(x, y)^2}
 ```
 
+```{r}
+# since we have data from multiple sites, we would like to pass the time depended data from every site separately through the model to learn. We wrap the data by site and put them together for training.
+train_sites<-unique(sensor_multi_train_norm$sitename)
 
-```{r include=FALSE}
-#training<-zip(train_list,gpp_train_list, meta_list)
-#class(training)
-#training
-#training_list<-training[[1]]
+train_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
+  train_list[[i]]<-site_df%>%select(-"sitename","GPP_NT_VUT_REF")
+}
 
-#training_list[1]
-#training_list[2]
+gpp_train_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
+  gpp_train_list[[i]]<-site_df%>%select("GPP_NT_VUT_REF")
+}
 
+meta_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  meta_df<-meta_multi_train[meta_multi_train$sitename==train_sites[i],]
+  meta_list[[i]]<-meta_df%>%select(-"sitename")
+}
+
+training_df<-rbind(train_list,gpp_train_list, meta_list)
 ```
+
 
 Now we train the LSTM with condition model to predict the left-out site "IT-Lav". 
 ```{r message=FALSE}
 # training model with defined epochs
 r2 <- c()
-train_loss <- 0.0
-train_r2 <- 0.0
-training_df<-rbind(train_list,gpp_train_list, meta_list)
-
 
 for (epoch in 1:n_epochs){
   train_loss <- 0.0
@@ -745,7 +738,7 @@ for (epoch in 1:n_epochs){
     optimizer$step()
     
     # compute the loss and R2 in the training
-    train_loss <- train_loss + loss$item()# extract the loss value as float
+    train_loss <- c(train_loss, loss$item())# extract the loss value as float
     train_r2 <- c(train_r2,rsq(as.numeric(y), as.numeric(y_pred)))}
   
   # put the model in evaluation mode in which the parameters will not be updated.
@@ -754,19 +747,19 @@ for (epoch in 1:n_epochs){
   # pass the test set into the model and compute the R2
   # 'with_no_grad()' deactives the gradient calculations which reducing the memory usage and speeding up the computation.
   with_no_grad({
-    x <- torch_tensor(sensor_five_test_norm%>% 
+    x <- torch_tensor(sensor_multi_test_norm%>% 
                                 select(-GPP_NT_VUT_REF) %>% 
                                 as.matrix(), # x_test, 
                               dtype = torch_float()
                               )#$cuda()
     
-    y <- torch_tensor(sensor_five_test_norm%>% 
+    y <- torch_tensor(sensor_multi_test_norm%>% 
                                 select(GPP_NT_VUT_REF) %>% 
                                 as.matrix(), # y_test, 
                               dtype = torch_float()
                               )#$cuda()
             
-    c <- torch_tensor(meta_five_test%>% select(-sitename)%>%
+    c <- torch_tensor(meta_multi_test%>% select(-sitename)%>%
                                 as.matrix(), 
                               dtype = torch_float()
                               )#$cuda()
@@ -774,11 +767,11 @@ for (epoch in 1:n_epochs){
             
     y_pred <- model_condition(x,c)
             
-    # compute the loss
+    # compute the r2 in the test time
     test_r2 <- rsq(as.numeric(y), as.numeric(y_pred))
     r2 <- c(r2, test_r2)
     
-    # save the predictions 
+    # save the predictions of the highest r2 epoch
     if (test_r2 >= max(r2)){cv_pred <- list(y_pred)} })
 }
 
@@ -789,12 +782,13 @@ Print the predicted result
 printf(c("Site: %s\n", "R2: %s\n"), c(as.character("CH-Lae"), max(r2)))
 ```
 
+Visualizing the result
 ```{r include=FALSE}
 cv_pred[[1]]%>% as.numeric() %>% hist()
 ```
 
-```{r, message=FALSE}
-plot_df<-data.frame(GPP_NT_VUT_REF=sensor_five_test_norm$GPP_NT_VUT_REF,pred=cv_pred[[1]] %>% as.numeric())
+```{r}
+plot_df<-data.frame(GPP_NT_VUT_REF=sensor_multi_test_norm$GPP_NT_VUT_REF,pred=cv_pred[[1]] %>% as.numeric())
 plot_df$ind<-seq(1,nrow(plot_df))
 ggplot(plot_df)+geom_line(aes(ind,GPP_NT_VUT_REF))+geom_line(aes(ind, pred),color="red")
 
