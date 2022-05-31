@@ -511,17 +511,16 @@ df_meta_dummy<-data.frame(get_dummies.(df_meta_five%>%select(-c("sitename","koep
 df_meta_dummy$sitename<-df_meta_five$sitename
 
 #select the site that we use for testing
-#ind_IT_lav<-c(df_five$sitename=="IT-Lav")
-ind_IT_lav<-c(df_five$sitename=="CH-Lae")
+ind_CH_Lae<-c(df_five$sitename=="CH-Lae")
 
 
 #split the train set and test set
-meta_five_train<-df_meta_dummy[!ind_IT_lav,]
-sensor_five_train<-df_sensor_five[!ind_IT_lav,]
+meta_five_train<-df_meta_dummy[!ind_CH_Lae,]
+sensor_five_train<-df_sensor_five[!ind_CH_Lae,]
 
 
-meta_five_test<-df_meta_dummy[ind_IT_lav,]
-sensor_five_test<-df_sensor_five[ind_IT_lav,]
+meta_five_test<-df_meta_dummy[ind_CH_Lae,]
+sensor_five_test<-df_sensor_five[ind_CH_Lae,]
 
 ```
 
@@ -659,7 +658,7 @@ INPUT_FEATURES <- ncol(sensor_five_train%>%
 HIDDEN_DIM <- 256# hyperparameter of connecting LSTM and MLP which is the dimension of the hidden layer that is connecting them
 
 CONDITIONAL_FEATURES <- ncol(meta_five_train)-1# the dimension of the condition feature is the number of column of meta-data after one-hot encoding
-conditional <- 0 #the indicator that we will use condition part in the model
+conditional <- 1#the indicator that we will use condition part in the model
 ```
 
 
@@ -787,7 +786,7 @@ for (epoch in 1:n_epochs){
 
 Print the predicted result
 ```{r}
-printf(c("Site: %s\n", "R2: %s\n"), c(as.character("IT-Lav"), max(r2)))
+printf(c("Site: %s\n", "R2: %s\n"), c(as.character("CH-Lae"), max(r2)))
 ```
 
 ```{r include=FALSE}
