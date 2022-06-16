@@ -398,7 +398,7 @@ printf(c("Site: %s\n", "R2: %s\n"), c(as.character(df$sitename[1]), max(r2)))
 Visualise results.
 
 ```{r  ,warning=F,message=F}
-cv_pred[[1]] %>% as.numeric() %>% hist()
+cv_pred[[1]] %>% as.numeric() %>% hist(main="Prediction of LSTM+MLP on GPP values")
 
 mean <- tidy(pp, id = "normalize") %>%
   filter(terms == "GPP_NT_VUT_REF", statistic == "mean") %>%
@@ -480,7 +480,7 @@ for(i in 1:length(selected_sitename)){
    out<-i_df
    df_withind<-rbind(df_withind,out)}
 
-ggplot(df_withind, aes(inx, GPP_NT_VUT_REF,colour=sitename))+geom_line()
+ggplot(df_withind, aes(inx, GPP_NT_VUT_REF,colour=sitename))+geom_line()+ggtitle("visualising target value by sites")
 
 ```
 
@@ -780,15 +780,36 @@ printf(c("Site: %s\n", "R2: %s\n"), c(as.character("CH-Lae"), max(r2)))
 ```
 
 Visualizing the result
-```{r include=FALSE}
-cv_pred[[1]]%>% as.numeric() %>% hist()
+```{r message=FALSE, warning=F}
+cv_pred[[1]]%>% as.numeric() %>% hist(main="Prediction of LSTM with condition on GPP values of CH-Lae")
 ```
+
 
 ```{r}
-plot_df<-data.frame(GPP_NT_VUT_REF=sensor_multi_test_norm$GPP_NT_VUT_REF,pred=cv_pred[[1]] %>% as.numeric())
-plot_df$ind<-seq(1,nrow(plot_df))
-ggplot(plot_df)+geom_line(aes(ind,GPP_NT_VUT_REF))+geom_line(aes(ind, pred),color="red")
+mean <- tidy(pp, id = "normalize") %>%
+  filter(terms == "GPP_NT_VUT_REF", statistic == "mean") %>%
+  pull(value)
+
+sd <- tidy(pp, id = "normalize") %>%
+  filter(terms == "GPP_NT_VUT_REF", statistic == "sd") %>%
+  pull(value)
+
+tmp<-sensor_multi_test_norm %>% mutate(pred = cv_pred[[1]] %>% as.numeric()) %>% 
+      mutate(GPP_NT_VUT_REF = GPP_NT_VUT_REF * sd + mean,
+             pred = pred * sd + mean) %>% mutate(ind =seq(1,nrow(sensor_multi_test_norm)))
+
+ggplot(tmp)+geom_line(aes(ind,GPP_NT_VUT_REF))+geom_line(aes(ind, pred),color="red")
 
 ```
 
-
+```{r message=FALSE, warning=F}
+tmp %>% 
+  ggplot(aes(pred, GPP_NT_VUT_REF)) +
+  geom_hex() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  scale_fill_gradientn(
+    colours = colorRampPalette( c("gray65", "navy", "red", "yellow"))(5)) +
+  xlim(-5, 20) + ylim(-5, 20) +
+  theme_classic()
+```
