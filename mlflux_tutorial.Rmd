@@ -24,11 +24,11 @@ Memory cells in deep neural network architectures to achieve this goal.
 We again use the FLUXNET dataset in this chapter. The measurements are
 at daily resolution and are used together with (time-invariant) metadata
 from each site to predict `GPP_NT_VUT_REF`. We will use a new machine
-learning framework called `torch` developed based on `PyTorch`. It is a
+learning framework called `torch` in R developed based on `PyTorch`. It is a
 neural network library that computes the differentiation automatically
 and is powerful in GPU acceleration.
 
-### LSTM
+### Long Short-Term Memory
 
 A Long Short-Term Memory (LSTM) neural network is a type of recurrent
 neural network. The inputs and outputs of LSTM are time-depended
@@ -53,9 +53,9 @@ $$C_t = f_tC_{(t-1)} + i_tg_t$$ $$h_t = o_{t}tanh(c_t)$$
 
 
 
-### MLP
+### Multi-layer perception
 
-Multi-layer perception model is a type of artificial neural network
+Multi-layer perception(MLP) model is a type of artificial neural network
 (ANN). Every neural in a single layer is connected to all the neural in
 the next layer, so you can also see it is refereed as fully-connected
 neural network in some context. The edges are where we call the weights
@@ -186,7 +186,7 @@ ddf_test_norm <- bake(pp, ddf_test)
 
 ```
 
-Now, we define is the model LSTM+MLP architecture. In `initialze` we
+Now, we define the model LSTM+MLP architecture. In `initialze` we
 define the objects that is needed for the model, including the function
 and the variables. We will use one LSTM followed by three fully
 connected layers. A final linear layer is necessary to map the last
@@ -196,7 +196,7 @@ how we pass the values through every layers. `in_features` and
 `out_features` are the number of edges attach to the node at that layer.
 Note that since in this case, the metadata is the same for all the
 points, how to utilize the metadata in the model will be introduced in
-the next section.
+the next chapter.
 
 ```{r LSTM}
 mymodule_generator <- nn_module(
@@ -213,6 +213,7 @@ mymodule_generator <- nn_module(
       )
     
     ## in_feature is the dimension of the last layer and out_feature is the dimension of the next layer
+    ## relu is the name of used activation function
     self$fc1 <- nn_sequential(nn_linear(in_features = hidden_dim, 
                                         out_features = 32),
                               nn_relu()
@@ -233,7 +234,7 @@ mymodule_generator <- nn_module(
     # concatenate the sequence of tensors by row
     out <- self$lstm(torch_stack(x, 1)) 
 
-    # take the output in hidden state                   
+    # take the values in the output of LSTM layer         
     out <- out[[1]]$squeeze(1) # squeeze here is to squeeze on the unused dimension
     
     y <- self$fc1(out)  
@@ -274,7 +275,7 @@ mymodule_generator <- nn_module(
 
 ```
 
-We define the parameters for the model. The `INPUT_FEATURES` is number
+We define the parameters for the model and training. The `INPUT_FEATURES` is number
 of predictors and we use here 256 hidden nodes (`HIDDEN_DIM`) in the
 output of the LSTM to MLP.
 
@@ -324,7 +325,7 @@ train_r2 <- 0.0
 
 for (epoch in 1:n_epochs){
   
-    # put the model in train mode in which parameters are learnt in the backward pass
+    # put the model in train mode in which parameters are learnt and updated in the backward pass
     model$train()
   
     # Since "torch" operates on the data type "tensor" and the function only accept R atomic vector. So we transform the dataframe to matrix then to tensor data type 
@@ -345,22 +346,22 @@ for (epoch in 1:n_epochs){
     # clears old gradients from the last step 
     optimizer$zero_grad()
     
-    # specify MSE as the loss function
+    # specify MSE as the loss function and calculate it in every epoch
     loss <- nnf_mse_loss(y_pred, y)
     
-    # update the parameter
-    loss$backward()
-    optimizer$step()
+    # update the weights
+    loss$backward() #calculating gradient
+    optimizer$step() #update with optimizer 
     
     # compute the loss and R2 in the training
-    train_loss <- train_loss + loss$item()# extract the loss value as float
-    train_r2 <- train_r2 + rsq(as.numeric(y), as.numeric(y_pred))
+    train_loss <- train_loss + loss$item()#extract the loss value as float and calculate the sum of training losses (can be divided by loss to calculate the average training loss)
+    train_r2 <- c(train_r2, rsq(as.numeric(y), as.numeric(y_pred)))#check the R2 per epoch
 
     # put the model in evaluation mode in which the parameters will not be updated.
     model$eval()
     
     # pass the test set into the model and compute the R2
-    # 'with_no_grad()' deactives the gradient calculations which reducing the memory usage and speeding up the computation.
+    # 'with_no_grad()' de-actives the gradient calculations which reducing the memory usage and speeding up the computation.
     with_no_grad({
             x <- torch_tensor(ddf_test_norm %>% 
                                 select(-GPP_NT_VUT_REF) %>% 
@@ -440,9 +441,9 @@ tmp %>%
 
 
 # LSTM with condition {#ch-15}
-In this chapter we will introduce a model which includes the time-invariant variables to compute the predictions. The time-invariant variables are usually measurement of every sites. We can train this model on the data from multiple sites and predict the GPP values on a new site. Thus, we evaluate it with the predictions of an unseen site in the example. Here is an overview of the "LSTM with condition" in which the MLP is slightly tuned for better predictions. The "+" in the diagram means concatenation. 
+In this chapter we will introduce a model gives an option of incorporating the time-invariant variables to compute the predictions. The time-invariant variables are usually information of sites. We would like to examine the generalisability of out-of-distribution data which means it has the capability to predict on the GPP values on an unseen site. Thus, we train the model on data from multiple sites and evaluate on an new site. Here is an overview of the "LSTM with condition" in which the MLP is slightly tuned for better predictions. The "+" in the diagram means concatenation. We encode the vegetation types with "one-hot-encoding" method. 
 ![LSTM_withcondition](graph/lstm_withcond.png)
-
+First we import the data with multiple sites. 
 ```{r message=FALSE}
 #Import a dataset with multiple sites
 df_multi<- read_csv("data/df_multi.csv")
@@ -466,6 +467,7 @@ skim(df_multi)
 
 ```
 
+Then we have a feeling of the target values by visualising with ggplot. We can see a seasonal trend in the data and the time-span of the data is slightly different from site to site. 
 ```{r}
 #get the name of sites
 selected_sitename<-unique(df_multi$sitename)
@@ -501,20 +503,17 @@ write_csv(ddf,"data/df_sensor_multi.csv")
 ```{r}
 df_meta_multi<-read.csv("data/df_meta_multi.csv")
 df_sensor_multi<-read.csv("data/df_sensor_multi.csv")
-
 ```
  
- 
-Since the time-invariant data comes from meta-data of the sites, they are various from site to site. We encode the variables with one-hot encoding method and separate the train and test sets. 
+The time-invariant variables are different in every site. We encode them with one-hot encoding and separate the train and test sets. 
 ```{r}
-#one-hot encoding for the time-invariant variables
+#one-hot encoding for the time-invariant variables. we only use classid and kopeppen_code here.
 df_meta_dummy<-data.frame(get_dummies.(df_meta_multi%>%select(-c("sitename","koeppen_code","plant_functional_type")))%>%select(-colnames(df_meta_multi%>%select(-c("sitename","koeppen_code","plant_functional_type")))))
                                                                                                                              
 df_meta_dummy$sitename<-df_meta_multi$sitename
 
-#select the site that we use for testing
+#select the site that we use for testing and get its index
 ind_CH_Lae<-c(df_multi$sitename=="CH-Lae")
-
 
 #split the train set and test set. This time we take the whole site out as the test site. 
 meta_multi_train<-df_meta_dummy[!ind_CH_Lae,]
@@ -525,7 +524,7 @@ sensor_multi_test<-df_sensor_multi[ind_CH_Lae,]
 
 ```
 
-Similar to the last chapter we apply the recipes package on training and testing datasets. 
+Similarly, we apply the recipes package on train and test sensing data for normalisation.  
 ```{r}
 ## define recipe
 myrecipe_ddf <- recipe(
@@ -541,25 +540,50 @@ pp <- prep(myrecipe_ddf, training = sensor_multi_train)
 ## apply the same normalisation to training and testing
 sensor_multi_train_norm <- bake(pp, sensor_multi_train)
 sensor_multi_test_norm <- bake(pp, sensor_multi_test)
+```
 
+
+We want to keep the time-dependence by every site but not crossing sites when passing through LSTM, so we wrap the data by sites here.
+```{r}
+#we add back the sitename column
 sensor_multi_train_norm$sitename<-sensor_multi_train$sitename
 
+#get the sitename in training set
+train_sites<-unique(sensor_multi_train_norm$sitename)
+
+# wrap the sensor dataset by site
+train_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
+  train_list[[i]]<-site_df%>%select(-"sitename","GPP_NT_VUT_REF")
+}
+
+# wrap the gpp value by site
+gpp_train_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
+  gpp_train_list[[i]]<-site_df%>%select("GPP_NT_VUT_REF")
+}
+
+#wrap the meta dataset by site
+meta_list<-vector(mode = "list", length = length(train_sites))
+for(i in 1:length(train_sites)){
+  meta_df<-meta_multi_train[meta_multi_train$sitename==train_sites[i],]
+  meta_list[[i]]<-meta_df%>%select(-"sitename")
+}
+
+# binding them to one big set
+training_df<-rbind(train_list,gpp_train_list, meta_list)
 ```
 
-```{r}
-
-
-```
-
-
-Here is the LSTM with condition model. 
+Here is the LSTM with optional condition model. 
 ```{r LSTM with condition}
 mymodule_generator_withcondition <- nn_module(
   initialize = function(input_dim, 
                         conditional_dim, # the dimension of the time-invariant dataset
                         hidden_dim, 
                         conditional=0, # condition=1: we are using condition model, condition=0: we use only sensor data
-                        num_layers = 2
+                        num_layers = 2 #number of layer increases to 2 here to improve performance of the example
                         ){
     
     self$lstm <- nn_lstm(
@@ -578,7 +602,7 @@ mymodule_generator_withcondition <- nn_module(
            out_features =64
            ),
          nn_relu()) 
-     } else {
+     } else {# optionally when we do not indicate the use of condition the model is similar to chapter 1
        self$fc1 <- nn_sequential(
          nn_linear(
            in_features = hidden_dim, 
@@ -586,8 +610,6 @@ mymodule_generator_withcondition <- nn_module(
          nn_relu()
          )
      }
-
-    #in_feature is the dimension of the last layer and out_feature is the dimension of the next layer
     
     self$fc2 <- nn_sequential(nn_linear(in_features=64, 
                                        out_features =64), 
@@ -609,11 +631,12 @@ mymodule_generator_withcondition <- nn_module(
     # take the output in hidden state
     out <- out[[1]]$squeeze(1) # squeeze here is to squeeze on the unused dimension
     
-    # we concatenating the time-invariant to the output of LSTM when utilizing condition part of the model. 
+    # we concatenating the time-invariant variables to the outputs of LSTM when utilizing condition part of the model. 
     if (self$conditional == 1){
       out <- torch_cat(list(out,c), dim = 2) 
      }
     
+    # then this part is the same with last chapter
     y <- self$fc1(out)  
     y <- self$fc2(y)
     y <- self$fc3(y)
@@ -623,7 +646,7 @@ mymodule_generator_withcondition <- nn_module(
 )
 ```
 
-
+We define the parameter for model and training
 ```{r}
 # fixed seed
 torch_manual_seed(40)
@@ -638,12 +661,12 @@ DEVICE <- if (cuda_is_available()){c("cuda")} else {c("cpu")}
 INPUT_FEATURES <- ncol(sensor_multi_train%>% 
                          select(-c("GPP_NT_VUT_REF","sitename")))
 
-HIDDEN_DIM <- 256# hyperparameter of connecting LSTM and MLP which is the dimension of the hidden layer that is connecting them
+HIDDEN_DIM <- 256
 
-CONDITIONAL_FEATURES <- ncol(meta_multi_train)-1# the dimension of the condition feature is the number of column of meta-data after one-hot encoding
-conditional <- 1#the indicator that we will use condition part in the model
+CONDITIONAL_FEATURES <- ncol(meta_multi_train)-1 # the dimension of the condition feature is the number of column of meta-data after one-hot encoding and we dont put sitenames in. 
+
+conditional <- 1 #we will use condition part in the model. It is worth to experiment if incorporating the time-invariant model help improve the performance of the model, simply by changing it to 0 or other numbers. 
 ```
-
 
 We put the parameter together with model architecture and obtain the corresponding optimizer.
 ```{r}
@@ -663,31 +686,6 @@ optimizer <- optim_adam(model_condition$parameters, lr = 0.001)
 rsq <- function(x, y){cor(x, y)^2}
 ```
 
-```{r}
-# since we have data from multiple sites, we would like to pass the time depended data from every site separately through the model to learn. We wrap the data by site and put them together for training.
-train_sites<-unique(sensor_multi_train_norm$sitename)
-
-train_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
-  train_list[[i]]<-site_df%>%select(-"sitename","GPP_NT_VUT_REF")
-}
-
-gpp_train_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  site_df<-sensor_multi_train_norm[sensor_multi_train_norm$sitename==train_sites[i],]
-  gpp_train_list[[i]]<-site_df%>%select("GPP_NT_VUT_REF")
-}
-
-meta_list<-vector(mode = "list", length = length(train_sites))
-for(i in 1:length(train_sites)){
-  meta_df<-meta_multi_train[meta_multi_train$sitename==train_sites[i],]
-  meta_list[[i]]<-meta_df%>%select(-"sitename")
-}
-
-training_df<-rbind(train_list,gpp_train_list, meta_list)
-```
-
 
 Now we train the LSTM with condition model to predict the left-out site "IT-Lav". 
 ```{r message=FALSE}
@@ -698,16 +696,18 @@ for (epoch in 1:n_epochs){
   train_loss <- 0.0
   train_r2 <- 0.0
   
-  # put the model in train mode in which parameters are learnt in the backward pass
   model_condition$train()
+  
+  # we update the parameter of the model after every time passing one site of data
   for (i in 1:ncol(training_df)){
     
+    #take out the data from one site
     training_list<-training_df[,i]
+    
     x<-training_list$train_list
     y<-training_list$gpp_train_list
     c<-training_list$meta_list
     
-    # Since "torch" operates on the data type "tensor" and the function only accept R atomic vector. So we transform the dataframe to matrix then to tensor data type 
     x <- torch_tensor(x %>% select(-GPP_NT_VUT_REF) 
                        %>%as.matrix(), 
                       dtype = torch_float()
@@ -727,25 +727,22 @@ for (epoch in 1:n_epochs){
     
     y_pred <- model_condition(x,c)
     
-    # clears old gradients from the last step 
     optimizer$zero_grad()
     
-    # specify MSE as the loss function
     loss <- nnf_mse_loss(y_pred, y)
     
-    # update the parameter
+    # update the parameter after one site of data passing
     loss$backward()
     optimizer$step()
     
     # compute the loss and R2 in the training
-    train_loss <- c(train_loss, loss$item())# extract the loss value as float
+    train_loss <- c(train_loss, loss$item())
     train_r2 <- c(train_r2,rsq(as.numeric(y), as.numeric(y_pred)))}
   
-  # put the model in evaluation mode in which the parameters will not be updated.
+  # we evaluate the model after training the model on all sites of data
   model_condition$eval()
     
   # pass the test set into the model and compute the R2
-  # 'with_no_grad()' deactives the gradient calculations which reducing the memory usage and speeding up the computation.
   with_no_grad({
     x <- torch_tensor(sensor_multi_test_norm%>% 
                                 select(-GPP_NT_VUT_REF) %>% 
@@ -760,7 +757,7 @@ for (epoch in 1:n_epochs){
                               )#$cuda()
             
     c <- torch_tensor(meta_multi_test%>% select(-sitename)%>%
-                                as.matrix(), 
+                                as.matrix(), #conditions
                               dtype = torch_float()
                               )#$cuda()
     
